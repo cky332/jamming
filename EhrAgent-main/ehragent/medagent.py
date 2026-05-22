@@ -9,7 +9,22 @@ from autogen.agentchat import Agent, UserProxyAgent, ConversableAgent
 from termcolor import colored
 import Levenshtein
 
+try:
+    from attack.llm.router import make_client as _attack_make_client
+except Exception:
+    _attack_make_client = None
+
 logger = logging.getLogger(__name__)
+
+
+def _make_client(config):
+    if _attack_make_client is not None:
+        return _attack_make_client(config)
+    return AzureOpenAI(
+        api_key=config["api_key"],
+        azure_endpoint=config["base_url"],
+        api_version=config["api_version"],
+    )
 
 class MedAgent(UserProxyAgent):
     def __init__(
@@ -58,11 +73,7 @@ class MedAgent(UserProxyAgent):
         query_message = RetrKnowledge.format(question=query)
         messages = [{"role":"system","content":"You are an AI assistant that helps people find information."},
                     {"role":"user","content": query_message}]
-        client = AzureOpenAI(
-            api_key=config["api_key"],
-            azure_endpoint=config["base_url"],
-            api_version=config["api_version"],
-        )
+        client = _make_client(config)
         while patience > 0:
             patience -= 1
             try:
@@ -85,12 +96,16 @@ class MedAgent(UserProxyAgent):
         return "Fail to retrieve related knowledge, please try again later."
 
     def retrieve_examples(self, query):
-        levenshtein_dist = {}
-        for i in range(len(self.memory)):
-            question = self.memory[i]["question"]
-            levenshtein_dist[i] = Levenshtein.distance(query, question)
-        levenshtein_dist = sorted(levenshtein_dist.items(), key=lambda x: x[1], reverse=False)
-        selected_indexes = [levenshtein_dist[i][0] for i in range(min(self.num_shots, len(levenshtein_dist)))]
+        retriever = getattr(self, "retriever", None)
+        if retriever is not None:
+            selected_indexes = retriever.retrieve(query, self.num_shots, self.memory)
+        else:
+            levenshtein_dist = {}
+            for i in range(len(self.memory)):
+                question = self.memory[i]["question"]
+                levenshtein_dist[i] = Levenshtein.distance(query, question)
+            levenshtein_dist = sorted(levenshtein_dist.items(), key=lambda x: x[1], reverse=False)
+            selected_indexes = [levenshtein_dist[i][0] for i in range(min(self.num_shots, len(levenshtein_dist)))]
         examples = []
         for i in selected_indexes:
             template = "Question: {}\nKnowledge:\n{}\nSolution:\n{}\n".format(self.memory[i]["question"], self.memory[i]["knowledge"], self.memory[i]["code"])
@@ -157,11 +172,7 @@ class MedAgent(UserProxyAgent):
         query_message = CodeDebugger.format(question=self.question, code=code, error_info=error_info)
         messages = [{"role":"system","content":"You are an AI assistant that helps people debug their code. Only list one most possible reason to the errors."},
                     {"role":"user","content": query_message}]
-        client = AzureOpenAI(
-            api_key=config["api_key"],
-            azure_endpoint=config["base_url"],
-            api_version=config["api_version"],
-        )
+        client = _make_client(config)
         while patience > 0:
             patience -= 1
             try:

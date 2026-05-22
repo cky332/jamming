@@ -94,17 +94,26 @@ def test_parse_output_code_block_fallback():
     print("\n[O3b] parse_output handles code-block fallback (DeepSeek mode)")
     # DeepSeek doesn't honor function-calling: emits markdown ```python```
     # blocks; our injection/driver.py reply handler runs them via run_code
-    # and replies with "exitcode: 0...\nCode output: <result>" as role=user.
+    # and replies with "exitcode: 0...\nCode output: <result>".
+    # CRITICAL: autogen stores _oai_messages from the receiver's perspective,
+    # so chatbot's messages appear as role=user in user_proxy._oai_messages[chatbot],
+    # and user_proxy's own auto-replies appear as role=assistant. parse_output
+    # MUST NOT filter by role for code-block / Code-output detection.
     # parse_output should return the EVALUATED result (Code output: 3000.0),
     # not the symbolic name (min_cost), so judge_substring("3000", pred) hits.
-    oai = {
+    oai_user_proxy_view = {
         "agent_A": [
-            {"role": "assistant", "content": "```python\nanswer = min_cost\n```", "function_call": None},
-            {"role": "user", "content": "exitcode: 0 (execution succeeded)\nCode output: 3000.0", "function_call": None},
-            {"role": "assistant", "content": "TERMINATE", "function_call": None},
+            # initial prompt the user_proxy SENT (its own msg → role=assistant)
+            {"role": "assistant", "content": "Question: ...\nanswer = 0\n", "function_call": None},
+            # chatbot's reply (received → role=user)
+            {"role": "user", "content": "```python\nanswer = min_cost\n```", "function_call": None},
+            # user_proxy's auto-reply via our handler (own msg → role=assistant)
+            {"role": "assistant", "content": "exitcode: 0 (execution succeeded)\nCode output: 3000.0", "function_call": None},
+            # chatbot's TERMINATE (received → role=user)
+            {"role": "user", "content": "TERMINATE", "function_call": None},
         ],
     }
-    pred = parse_output(oai)
+    pred = parse_output(oai_user_proxy_view)
     if "3000" not in pred:
         _fail("parse-cb-eval", f"expected '3000' in pred (Code output:), got {pred!r}")
     _ok(f"parse_output returns evaluated result from Code output: ('{pred}')")

@@ -65,10 +65,6 @@ class MedAgent(UserProxyAgent):
         # Returns the related information to the given query.
         patience = 2
         sleep_time = 30
-        openai.api_type = config["api_type"]
-        openai.api_base = config["base_url"]
-        openai.api_version = config["api_version"]
-        openai.api_key = config["api_key"]
         engine = config["model"]
         query_message = RetrKnowledge.format(question=query)
         messages = [{"role":"system","content":"You are an AI assistant that helps people find information."},
@@ -164,10 +160,6 @@ class MedAgent(UserProxyAgent):
         # Returns the related information to the given query.
         patience = 2
         sleep_time = 30
-        openai.api_type = config["api_type"]
-        openai.api_base = config["base_url"]
-        openai.api_version = config["api_version"]
-        openai.api_key = config["api_key"]
         engine = config["model"]
         query_message = CodeDebugger.format(question=self.question, code=code, error_info=error_info)
         messages = [{"role":"system","content":"You are an AI assistant that helps people debug their code. Only list one most possible reason to the errors."},

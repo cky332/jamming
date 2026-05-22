@@ -24,11 +24,15 @@ def openai_config(model):
             raise RuntimeError(
                 "SILICONFLOW_API_KEY env var required for deepseek_v32 branch"
             )
+        # NOTE: api_type intentionally omitted. autogen 0.2.0 only strips
+        # api_type from create() kwargs when it startswith("azure"); other
+        # values (incl. "openai") leak into completions.create() and trigger
+        # TypeError: unexpected keyword argument 'api_type'. Our make_client
+        # in attack/llm/router.py defaults to OpenAI when api_type missing.
         config = {
             "model": "deepseek-ai/DeepSeek-V3.2-Exp",
             "api_key": api_key,
             "base_url": "https://api.siliconflow.cn/v1",
-            "api_type": "openai",
         }
     else:
         raise ValueError(f"Unknown model: {model!r}")

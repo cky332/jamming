@@ -38,6 +38,10 @@ def _iter_messages_reverse(oai_messages: Dict) -> List[Dict]:
 def extract_last_cell(oai_messages: Dict) -> Optional[str]:
     """Last code body the assistant emitted, looking in both function_call args
     (function-calling mode) and markdown code blocks (code-block fallback mode).
+
+    Does NOT filter by role: autogen stores _oai_messages from the receiver's
+    perspective, so chatbot's messages appear as role=user in user_proxy's
+    _oai_messages[chatbot]. Code blocks can appear in any message content.
     """
     for m in _iter_messages_reverse(oai_messages):
         fc = m.get("function_call")
@@ -55,32 +59,31 @@ def extract_last_cell(oai_messages: Dict) -> Optional[str]:
                 cell = args.get("cell")
                 if cell:
                     return cell
-        if m.get("role") == "assistant":
-            content = m.get("content") or ""
-            blocks = CODE_BLOCK_RE.findall(content)
-            for block in reversed(blocks):
-                if block.strip():
-                    return block.strip()
+        content = m.get("content") or ""
+        blocks = CODE_BLOCK_RE.findall(content)
+        for block in reversed(blocks):
+            if block.strip():
+                return block.strip()
     return None
 
 
 def extract_last_function_output(oai_messages: Dict) -> Optional[str]:
     """Last execution result, from either:
       - role=function content (function-calling mode), or
-      - role=user content matching 'Code output: X' (code-block fallback mode).
+      - any message content matching 'Code output: X' (code-block fallback mode;
+        role from user_proxy's perspective is 'assistant' for its own replies).
     """
     for m in _iter_messages_reverse(oai_messages):
         if m.get("role") == "function":
             content = m.get("content")
             if content:
                 return str(content)
-        if m.get("role") == "user":
-            content = m.get("content") or ""
-            match = CODE_OUTPUT_RE.search(content)
-            if match:
-                out = match.group(1).strip()
-                if out:
-                    return out
+        content = m.get("content") or ""
+        match = CODE_OUTPUT_RE.search(content)
+        if match:
+            out = match.group(1).strip()
+            if out:
+                return out
     return None
 
 

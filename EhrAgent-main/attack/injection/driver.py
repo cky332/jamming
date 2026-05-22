@@ -39,6 +39,44 @@ from attack.eval.parse_output import parse_output, extract_last_cell_for_storage
 from attack.llm.client import DeepSeekClient
 
 
+def _make_code_block_reply():
+    """Reply handler that runs markdown ```python``` blocks through our run_code().
+
+    Hooks into autogen 0.2.0's reply chain because DeepSeek-V3.2 (via SiliconFlow)
+    doesn't honor the OpenAI function-calling protocol — it emits code in markdown
+    blocks instead of {"function_call": {"name": "python", ...}}. Without this
+    handler, autogen falls back to its built-in subprocess execute_code, which has
+    no access to our monkey-patched tools.tabtools (install_mock_tools patches the
+    parent process namespace only).
+
+    run_code uses CodeHeader + exec in-process, picking up the stub DB correctly.
+    """
+    from autogen.code_utils import extract_code, UNKNOWN
+
+    def _reply(recipient, messages=None, sender=None, config=None):
+        if messages is None:
+            messages = recipient._oai_messages.get(sender, [])
+        if not messages:
+            return False, None
+        content = messages[-1].get("content", "") or ""
+        if not content.strip():
+            return False, None
+        blocks = extract_code(content)
+        # extract_code returns [(UNKNOWN, full_text)] when no code blocks found
+        if len(blocks) == 1 and blocks[0][0] == UNKNOWN:
+            return False, None
+        py_parts = [code for lang, code in blocks if lang.lower() in ("python", "py", "")]
+        if not py_parts:
+            return False, None
+        cell = "\n".join(py_parts)
+        result = run_code(cell)
+        # Match the format generate_code_execution_reply uses so chatbot sees
+        # similar shape regardless of which handler ran (helps debugging).
+        return True, f"exitcode: 0 (execution succeeded)\nCode output: {result}"
+
+    return _reply
+
+
 def build_chatbot_and_proxy(llm_name: str, seed: int = 42):
     """Mirror main.py's wiring with our deepseek_v32 config."""
     install_mock_tools()
@@ -69,6 +107,8 @@ def build_chatbot_and_proxy(llm_name: str, seed: int = 42):
     )
     user_proxy.register_function(function_map={"python": run_code})
     user_proxy.register_dataset("mimic_iii")
+    # position=0 → inserted at front → runs before generate_code_execution_reply
+    user_proxy.register_reply([autogen.Agent, None], _make_code_block_reply(), position=0)
     return chatbot, user_proxy
 
 

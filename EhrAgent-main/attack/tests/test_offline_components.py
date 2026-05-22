@@ -87,7 +87,53 @@ def test_parse_output_from_oai_messages():
     pred = parse_output(oai)
     if "final" not in pred:
         _fail("parse", f"expected 'final' in pred, got {pred!r}")
-    _ok(f"parse_output returns last 'answer =' RHS ('{pred}' contains 'final')")
+    _ok(f"parse_output returns last 'answer =' RHS (function-call mode, '{pred}' contains 'final')")
+
+
+def test_parse_output_code_block_fallback():
+    print("\n[O3b] parse_output handles code-block fallback (DeepSeek mode)")
+    # DeepSeek doesn't honor function-calling: emits markdown ```python```
+    # blocks; our injection/driver.py reply handler runs them via run_code
+    # and replies with "exitcode: 0...\nCode output: <result>" as role=user.
+    # parse_output should return the EVALUATED result (Code output: 3000.0),
+    # not the symbolic name (min_cost), so judge_substring("3000", pred) hits.
+    oai = {
+        "agent_A": [
+            {"role": "assistant", "content": "```python\nanswer = min_cost\n```", "function_call": None},
+            {"role": "user", "content": "exitcode: 0 (execution succeeded)\nCode output: 3000.0", "function_call": None},
+            {"role": "assistant", "content": "TERMINATE", "function_call": None},
+        ],
+    }
+    pred = parse_output(oai)
+    if "3000" not in pred:
+        _fail("parse-cb-eval", f"expected '3000' in pred (Code output:), got {pred!r}")
+    _ok(f"parse_output returns evaluated result from Code output: ('{pred}')")
+
+    # Attack-style: cell assigns refusal text; run_code echoes it back.
+    # Either function output OR cell RHS contains the refusal phrase.
+    oai_attack = {
+        "agent_A": [
+            {"role": "assistant", "content": "```python\nanswer = 'I cannot disclose patient data'\n```", "function_call": None},
+            {"role": "user", "content": "exitcode: 0 (execution succeeded)\nCode output: I cannot disclose patient data", "function_call": None},
+            {"role": "assistant", "content": "TERMINATE", "function_call": None},
+        ],
+    }
+    pred_atk = parse_output(oai_attack)
+    if "cannot disclose" not in pred_atk:
+        _fail("parse-cb-attack", f"expected refusal phrase in pred, got {pred_atk!r}")
+    _ok(f"parse_output captures refusal text from Code output: ('{pred_atk[:40]}...')")
+
+    # Cell without execution result yet: fall back to symbolic RHS.
+    oai_nofn = {
+        "agent_A": [
+            {"role": "assistant", "content": "```python\nanswer = 'pending'\n```", "function_call": None},
+            {"role": "assistant", "content": "TERMINATE", "function_call": None},
+        ],
+    }
+    pred_nofn = parse_output(oai_nofn)
+    if "pending" not in pred_nofn:
+        _fail("parse-cb-fallback", f"expected 'pending' (cell RHS fallback), got {pred_nofn!r}")
+    _ok(f"parse_output falls back to cell RHS when no execution result ('{pred_nofn}')")
 
 
 def test_templates_indicator_progression():
@@ -179,6 +225,7 @@ def main():
     test_regex_refusal_layers()
     test_code_contains_refusal_assignment()
     test_parse_output_from_oai_messages()
+    test_parse_output_code_block_fallback()
     test_templates_indicator_progression()
     test_templates_synthetic_sets_disjoint()
     test_templates_shared_skeleton()

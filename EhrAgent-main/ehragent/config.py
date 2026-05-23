@@ -30,7 +30,7 @@ def openai_config(model):
         # TypeError: unexpected keyword argument 'api_type'. Our make_client
         # in attack/llm/router.py defaults to OpenAI when api_type missing.
         config = {
-            "model": "deepseek-ai/DeepSeek-V3.2-Exp",
+            "model": "Pro/deepseek-ai/DeepSeek-V3.2",
             "api_key": api_key,
             "base_url": "https://api.siliconflow.cn/v1",
         }

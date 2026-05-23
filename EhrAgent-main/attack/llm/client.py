@@ -3,7 +3,7 @@ from typing import List, Dict, Optional
 from openai import OpenAI
 
 SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
-DEFAULT_MODEL = "deepseek-ai/DeepSeek-V3.2-Exp"
+DEFAULT_MODEL = "Pro/deepseek-ai/DeepSeek-V3.2"
 
 
 class DeepSeekClient:

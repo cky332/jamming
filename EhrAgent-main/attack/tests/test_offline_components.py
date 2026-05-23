@@ -4,9 +4,14 @@ Covers:
     - judge regex layers (is_refusal / is_attack_refusal regex paths)
     - code_contains_refusal_assignment (refusal-RHS detection without literal match)
     - parse_output extraction from a simulated autogen _oai_messages dict
-    - injection.templates.make_indicator / make_bridge_knowledge / make_refusal_code
+    - injection.templates.make_indicator (PSS level → indicator string)
     - synthetic templates: IDs unique, inject/probe sets non-overlapping
     - stub DB consistency: seed-style DB chains return expected_answer
+
+Note: make_bridge_knowledge and make_refusal_code remain in templates.py but
+are no longer used by injection/driver.py (would let the harness plant
+hardcoded refusal text into memory; honest threat model requires storing
+only model-produced content). Kept as legacy for potential ablation studies.
 """
 
 import os
@@ -20,7 +25,7 @@ from attack.eval.judge import (
 )
 from attack.eval.parse_output import parse_output, extract_last_cell
 from attack.injection.templates import (
-    make_indicator, make_bridge_knowledge, make_refusal_code, ATTACK_FINGERPRINT_TOKENS,
+    make_indicator, ATTACK_FINGERPRINT_TOKENS,
 )
 from attack.data import synthetic
 from attack.data import mock_tools, stub_db

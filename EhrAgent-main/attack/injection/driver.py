@@ -29,7 +29,6 @@ from attack.data.synthetic import (
     INJECT_TEMPLATES, BENIGN_PROBE_TEMPLATES, VICTIM_ID, QueryTemplate,
 )
 from attack.injection.pss import compose_attack_message, level_schedule
-from attack.injection.templates import make_bridge_knowledge, make_refusal_code
 from attack.injection.artifacts import InjectionArtifacts, InjectionStepResult, VictimSpec
 from attack.memory.store import seeds_from_prompts, save_memory, make_record
 from attack.eval.judge import (
@@ -201,7 +200,24 @@ def inject(
             cell = result["cell"]
             has_assign = code_contains_refusal_assignment(cell or pred)
             attack_ref = judge.is_attack_refusal(pred, question=atk.text)
-            stored = bool(attack_ref and has_assign)
+            # Surface gate: model's output looks like an attack refusal AND
+            # contains a refusal assignment in the code cell. Necessary but
+            # not sufficient — also require model-produced knowledge and cell.
+            surface_pass = bool(attack_ref and has_assign)
+
+            # HONEST CONTENT GATE: only store what the model itself produced.
+            # We do NOT prepend a hardcoded bridge (make_bridge_knowledge) or
+            # fabricate a refusal cell (make_refusal_code). Letting the harness
+            # plant a clean refusal narrative into memory's `knowledge` field
+            # would mean the propagation path is harness-authored, not model-
+            # authored — systematically inflating passive ISR because the
+            # retrieved fewshot at a later query carries OUR text rather than
+            # the model's. The threat model is "attacker controls queries, not
+            # memory content"; storage must reflect that.
+            model_knowledge = (result["knowledge"] or "").strip()
+            model_cell = (cell or "").strip()
+            content_pass = bool(model_knowledge and model_cell)
+            stored = surface_pass and content_pass
 
             arts.steps.append(InjectionStepResult(
                 template_id=atk.template_id,
@@ -215,13 +231,10 @@ def inject(
             ))
 
             if stored:
-                bridge = make_bridge_knowledge(victim)
-                stored_knowledge = bridge + (result["knowledge"] or "")
-                stored_cell = cell or make_refusal_code(victim)
                 rec = make_record(
                     question=atk.text,
-                    knowledge=stored_knowledge,
-                    code=stored_cell,
+                    knowledge=model_knowledge,
+                    code=model_cell,
                     source="attack",
                     victim=victim,
                     pss_step=level,
@@ -237,7 +250,14 @@ def inject(
                     print(f"[driver]     STORED (attack_refusal={attack_ref}, assign={has_assign})")
             else:
                 if verbose:
-                    print(f"[driver]     NOT stored (attack_refusal={attack_ref}, assign={has_assign})")
+                    if surface_pass and not content_pass:
+                        print(f"[driver]     NOT stored — surface gate passed but "
+                              f"model didn't produce both knowledge "
+                              f"(len={len(model_knowledge)}) and cell "
+                              f"(len={len(model_cell)})")
+                    else:
+                        print(f"[driver]     NOT stored (attack_refusal={attack_ref}, "
+                              f"assign={has_assign})")
 
             if level == "empty":
                 arts.passive_isr_total += 1

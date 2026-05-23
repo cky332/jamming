@@ -34,19 +34,20 @@ from attack.memory.store import seeds_from_prompts, save_memory, make_record
 from attack.eval.judge import (
     Judge, code_contains_refusal_assignment, regex_is_attack_refusal,
 )
-from attack.eval.parse_output import parse_output, extract_last_cell_for_storage
+from attack.eval.parse_output import parse_output, extract_last_cell_for_storage, looks_like_bare_python
 from attack.llm.client import DeepSeekClient
 
 
 def _make_code_block_reply():
-    """Reply handler that runs markdown ```python``` blocks through our run_code().
+    """Reply handler that runs ```python``` blocks (or bare Python) through run_code().
 
     Hooks into autogen 0.2.0's reply chain because DeepSeek-V3.2 (via SiliconFlow)
-    doesn't honor the OpenAI function-calling protocol — it emits code in markdown
-    blocks instead of {"function_call": {"name": "python", ...}}. Without this
-    handler, autogen falls back to its built-in subprocess execute_code, which has
-    no access to our monkey-patched tools.tabtools (install_mock_tools patches the
-    parent process namespace only).
+    doesn't honor the OpenAI function-calling protocol. Two emit styles observed:
+      - "-Exp" tier: wraps code in markdown ```python``` fences (extract_code OK)
+      - "Pro" tier: emits BARE Python with no fences at all
+    Without recognizing the bare style, autogen's built-in execute_code_blocks
+    (which only looks for fences) skips the message and replies "", breaking
+    the chat loop.
 
     run_code uses CodeHeader + exec in-process, picking up the stub DB correctly.
     """
@@ -60,17 +61,21 @@ def _make_code_block_reply():
         content = messages[-1].get("content", "") or ""
         if not content.strip():
             return False, None
+
+        # Path 1: explicit markdown ```python``` blocks.
         blocks = extract_code(content)
-        # extract_code returns [(UNKNOWN, full_text)] when no code blocks found
         if len(blocks) == 1 and blocks[0][0] == UNKNOWN:
+            # No fenced blocks. Path 2: bare Python (Pro tier behavior).
+            if looks_like_bare_python(content):
+                result = run_code(content.strip())
+                return True, f"exitcode: 0 (execution succeeded)\nCode output: {result}"
             return False, None
+
         py_parts = [code for lang, code in blocks if lang.lower() in ("python", "py", "")]
         if not py_parts:
             return False, None
         cell = "\n".join(py_parts)
         result = run_code(cell)
-        # Match the format generate_code_execution_reply uses so chatbot sees
-        # similar shape regardless of which handler ran (helps debugging).
         return True, f"exitcode: 0 (execution succeeded)\nCode output: {result}"
 
     return _reply

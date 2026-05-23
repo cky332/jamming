@@ -150,6 +150,61 @@ def test_parse_output_code_block_fallback():
     _ok(f"parse_output falls back to cell RHS when no execution result ('{pred_nofn}')")
 
 
+def test_parse_output_bare_python_pro_tier():
+    print("\n[O3c] parse_output handles bare Python (Pro/DeepSeek-V3.2 mode)")
+    from attack.eval.parse_output import looks_like_bare_python, extract_last_cell
+
+    # Pro tier emits raw code WITHOUT ```python``` fences.
+    bare_code = (
+        "# Load admissions to find HADM_IDs\n"
+        "admissions_db = LoadDB('admissions')\n"
+        "filtered = FilterDB(admissions_db, 'SUBJECT_ID=30789')\n"
+        "answer = GetValue(filtered, 'HADM_ID, list')"
+    )
+    if not looks_like_bare_python(bare_code):
+        _fail("bare-detect", "bare code should be detected as Python")
+    if looks_like_bare_python("The answer is 3000.0. Let me explain."):
+        _fail("bare-noise", "natural language should NOT be detected as Python")
+    if looks_like_bare_python(""):
+        _fail("bare-empty", "empty string should be False")
+    if looks_like_bare_python("Looking at the error, I need to use SQLInterpreter."):
+        _fail("bare-mixed", "narrative-only should NOT be detected as Python")
+    _ok("looks_like_bare_python: True for code, False for narrative")
+
+    # extract_last_cell should pick up bare code in user_proxy view (chatbot
+    # messages appear as role=user).
+    oai_bare = {
+        "agent_A": [
+            {"role": "assistant", "content": "<long prompt>", "function_call": None},
+            {"role": "user", "content": bare_code, "function_call": None},
+            {"role": "assistant", "content": "exitcode: 0 (execution succeeded)\nCode output: 5634,5635", "function_call": None},
+            {"role": "user", "content": "TERMINATE", "function_call": None},
+        ],
+    }
+    cell = extract_last_cell(oai_bare)
+    if not cell or "LoadDB" not in cell:
+        _fail("bare-extract", f"expected cell with LoadDB, got {cell!r}")
+    _ok(f"extract_last_cell picks up bare Python ({len(cell)} chars, has LoadDB)")
+
+    # parse_output should return the Code output value (priority 1 still wins)
+    pred = parse_output(oai_bare)
+    if "5634" not in pred:
+        _fail("bare-pred", f"expected '5634' in pred, got {pred!r}")
+    _ok(f"parse_output returns Code output: result for bare-code chat ('{pred}')")
+
+    # extract_last_cell should SKIP execution-result echoes ("exitcode:..." would
+    # otherwise look like Python because 'exitcode' starts with identifier).
+    oai_echo_only = {
+        "agent_A": [
+            {"role": "assistant", "content": "exitcode: 0 (execution succeeded)\nCode output: 42", "function_call": None},
+        ],
+    }
+    cell_echo = extract_last_cell(oai_echo_only)
+    if cell_echo:
+        _fail("bare-echo-skip", f"execution-result echo should NOT be returned as cell, got {cell_echo!r}")
+    _ok("extract_last_cell skips 'exitcode:' execution-result echoes")
+
+
 def test_templates_indicator_progression():
     print("\n[O4] indicator progression full → half → empty length")
     full = make_indicator("full", 30789)
@@ -240,6 +295,7 @@ def main():
     test_code_contains_refusal_assignment()
     test_parse_output_from_oai_messages()
     test_parse_output_code_block_fallback()
+    test_parse_output_bare_python_pro_tier()
     test_templates_indicator_progression()
     test_templates_synthetic_sets_disjoint()
     test_templates_shared_skeleton()
